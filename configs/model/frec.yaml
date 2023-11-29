@@ -1,0 +1,208 @@
+_target_: src.models.modules.nrec_module.NRECModule
+
+user_home_dir: /home/user_name
+
+checkpoint_path: ${model.user_home_dir}/epoch_epoch=003.ckpt
+
+hidden_dim: &hidden_dim 256
+nheads: &nheads 8
+dropout: &dropout 0.1
+num_queries: &num_queries 100
+backbone_out_channels: &backbone_out_channels 384
+contrastive_loss_hdim: &contrastive_loss_hdim 64 # TODO
+grd_decoder_layers: &grd_decoder_layers 6
+
+lr_visual_encoder: &lr_visual_encoder 1e-6
+lr_text_encoder: &lr_text_encoder 1e-7
+lr_cat_encoder: &lr_cat_encoder 2e-5
+lr_grd_decoder: &lr_grd_decoder 1e-5
+lr_crs_encoder: &lr_crs_encoder 2e-5
+lr_cot_encoder: &lr_cot_encoder 2e-5
+lr_rat_decoder: &lr_rat_decoder 2e-5
+lr_cor_decoder: &lr_cor_decoder 2e-5
+
+
+transformers_kwargs: &tf_kwargs
+  d_model: *hidden_dim
+  nhead: *nheads
+  dim_feedforward: 2048
+  dropout: *dropout
+  activation: "relu"
+
+
+RobertaModel: &RobertaModel
+  _target_: transformers.RobertaModel.from_pretrained
+  pretrained_model_name_or_path: "roberta-base"
+
+RobertaTokenizerFast: &RobertaTokenizerFast
+  _target_: transformers.RobertaTokenizerFast.from_pretrained
+  pretrained_model_name_or_path: "roberta-base"
+
+TokensPositionEmbeddings: &TokensPositionEmbeddings
+  _target_: src.models.position_encoding.TokensPositionEmbeddings
+  dims: *hidden_dim
+
+
+transformers_decoder_kwargs: &tf_decoder_kwargs
+  tokenizer: *RobertaTokenizerFast
+  text_encoder: *RobertaModel
+  token_pos_eb: *TokensPositionEmbeddings
+
+Linear: &Linear
+  _target_: torch.nn.Linear
+  in_features: *hidden_dim
+  out_features: *contrastive_loss_hdim
+
+
+
+model:
+
+  # encoders
+  task_encoders:
+
+    ## visual process
+    visual_encoder:
+      _target_: src.models.visual_encoder.build_visual_encoder
+      hidden_dim: *hidden_dim
+      position_embedding: "sine"
+      lr_visual_encoder: 1e-06
+      masks: False
+      visual_encoder: "timm_tf_efficientnet_b3_ns"
+
+    query_embed:
+      _target_: torch.nn.Embedding
+      num_embeddings: *num_queries
+      embedding_dim: *hidden_dim
+
+    input_proj:
+      _target_: torch.nn.Conv2d
+      in_channels: *backbone_out_channels
+      out_channels: *hidden_dim
+      kernel_size: 1
+
+    ## text process
+    token_pos_eb: *TokensPositionEmbeddings
+
+    tokenizer: *RobertaTokenizerFast
+    text_encoder: *RobertaModel
+    text_feature_resizer:
+      _target_: src.models.model_funcs.FeatureResizer
+      input_feat_size: 768  # equal text_encoder hidden size
+      output_feat_size: *hidden_dim
+      dropout: 0.1
+
+    concat_encoder:  # multimodal_fusion
+      _target_: src.models.cat_encoder.build_cat_encoder
+      <<: *tf_kwargs
+      num_encoder_layers: 6
+      normalize_before: False
+
+    cross_encoder: #logical_interaction
+      _target_: src.models.crs_encoder.build_crs_decoder
+      <<: *tf_kwargs
+      num_encoder_layers: 6
+
+
+  # decoders
+  task_decoders:
+    correction_decoder:
+      _target_: src.models.cor_decoder.build_cor_decoder
+      <<: *tf_kwargs
+      <<: *tf_decoder_kwargs
+      num_encoder_layers: 6
+
+
+    rationale_decoder:
+      _target_: src.models.rat_decoder.build_rat_decoder
+      <<: *tf_kwargs
+      <<: *tf_decoder_kwargs
+      num_encoder_layers: 6
+
+    grounding:
+      encoder:
+        _target_: src.models.cat_encoder.build_cat_encoder
+        <<: *tf_kwargs
+        num_encoder_layers: 6
+        normalize_before: False
+
+      decoder:
+        _target_: src.models.grd_decoder.build_grd_decoder
+        <<: *tf_kwargs
+        num_decoder_layers: *grd_decoder_layers
+        return_intermediate: True
+
+
+  task_headers:
+    grounding:
+      #    _target_: 34
+      class_embed:
+        <<: *Linear
+        out_features: 256
+
+      bbox_embed:
+        _target_: src.models.model_funcs.MLP
+        input_dim: *hidden_dim
+        hidden_dim: *hidden_dim
+        output_dim: 4
+        num_layers: 3
+
+      contrastive_align_projection_image:
+        <<: *Linear
+
+      contrastive_align_projection_text:
+        <<: *Linear
+
+  loss_func:
+    _target_: src.models.losses.lietr_criterions.SetCriterion
+    num_classes: 255
+    matcher:
+      _target_: src.models.lietr_matcher.HungarianMatcher
+      cost_class: 1
+      cost_bbox: 5
+      cost_giou: 2
+
+    eos_coef: 0.1
+    losses:
+      - 'labels'
+      - 'boxes'
+      - 'cardinality'
+      - 'contrastive_align'
+      - 'caption_ce'
+      - 'caption_mse'
+    temperature: 0.07
+
+  losses_weight:
+    loss_ce: 1
+    loss_bbox: 5
+    loss_caption_ce: 2
+    loss_caption_mse: 0.5
+    loss_contrastive_align: 1
+    loss_giou: 2
+
+
+
+lr: 5e-5
+weight_decay: 1e-4
+
+#The order of optimizer_params can not be reversed because it corresponds to nrec_scheduler
+optimizer_params:
+  visual_encoder: *lr_visual_encoder
+  text_encoder: *lr_text_encoder
+  concat_encoder: *lr_cat_encoder
+  cross_encoder: *lr_crs_encoder
+  grounding_encoder: *lr_cot_encoder
+  grounding_decoder: *lr_grd_decoder
+  correction_decoder_obj: *lr_cor_decoder
+  rationale_decoder_obj: *lr_rat_decoder
+
+#  cot_encoder: lr_cot_encoder
+#  crs_encoder: lr_crs_encoder
+#  grd_decoder: lr_grd_decoder
+#  rat_decoder: lr_rat_decoder
+#  cor_decoder: lr_cor_decoder
+#  cat_encoder: lr_cat_encoder
+
+nrec_scheduler:
+  schedule: "linear_with_warmup"
+  warm_steps_ratio: 0.01
+  lr_drop: 35

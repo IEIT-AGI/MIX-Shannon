@@ -1,0 +1,7 @@
+defaults:
+  - default.yaml
+
+gpus: 4
+strategy: ddp
+sync_batchnorm: True
+max_epochs: 20

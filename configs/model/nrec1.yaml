@@ -1,0 +1,139 @@
+_target_: src.models.nrec_module.NRECModule
+
+
+hidden_dim: &hidden_dim 256
+nheads: &nheads 8
+dropout: &dropout 0.1
+num_queries: &num_queries 100
+backbone_out_channels: &backbone_out_channels 384
+
+
+
+transformers_kwargs: &tf_kwargs
+  d_model: *hidden_dim
+  nhead: *nheads
+  dim_feedforward: 2048
+  dropout: *dropout
+  activation: "relu"
+
+
+RobertaModel: &RobertaModel
+  type: "transformers.RobertaModel.from_pretrained"
+  pretrained_model_name_or_path: "roberta-base"
+
+RobertaTokenizerFast: &RobertaTokenizerFast
+  type: "transformers.RobertaTokenizerFast.from_pretrained"
+  pretrained_model_name_or_path: "roberta-base"
+
+TokensPositionEmbeddings: &TokensPositionEmbeddings
+  type: "src.models.position_encoding.TokensPositionEmbeddings"
+  dims: *hidden_dim
+
+
+transformers_decoder_kwargs: &tf_decoder_kwargs
+  tokenizer: *RobertaTokenizerFast
+  text_encoder: *RobertaModel
+  token_pos_eb: *TokensPositionEmbeddings
+
+
+model:
+
+  # encoders
+  task_encoders:
+
+    ## visual process
+    visual_encoder:
+      type: "src.models.visual_encoder.build_visual_encoder"
+      hidden_dim: *hidden_dim
+      position_embedding: "sine"
+      lr_visual_encoder: 1e-06
+      masks: False
+      visual_encoder: "timm_tf_efficientnet_b3_ns"
+
+    query_embed:
+      type: "torch.nn.Embedding"
+      num_embeddings: *num_queries
+      embedding_dim: *hidden_dim
+
+    input_proj:
+      type: "torch.nn.Conv2d"
+      in_channels: *backbone_out_channels
+      out_channels: *hidden_dim
+      kernel_size: 1
+
+    ## text process
+    token_pos_eb: *TokensPositionEmbeddings
+
+    tokenizer: *RobertaTokenizerFast
+    text_encoder: *RobertaModel
+    text_feature_resizer:
+      type: "src.models.model_funcs.FeatureResizer"
+      input_feat_size: 768  # equal text_encoder hidden size
+      output_feat_size: *hidden_dim
+      dropout: 0.1
+
+    concat_encoder:  # multimodal_fusion
+      type: "src.models.cat_encoder.build_cat_encoder"
+      <<: *tf_kwargs
+      num_encoder_layers: 6
+      normalize_before: False
+
+    cross_encoder: #logical_interaction
+      type: "src.models.crs_encoder.build_crs_decoder"
+      <<: *tf_kwargs
+      num_encoder_layers: 6
+
+
+  # decoders
+  task_decoders:
+    correction_decoder:
+      type: "src.models.cor_decoder.build_cor_decoder"
+      <<: *tf_kwargs
+      <<: *tf_decoder_kwargs
+      num_encoder_layers: 6
+
+
+    rationale_decoder:
+      type: "src.models.rat_decoder.build_rat_decoder"
+      <<: *tf_kwargs
+      <<: *tf_decoder_kwargs
+      num_encoder_layers: 6
+
+    grounding:
+      encoder:
+        type: "src.models.cat_encoder.build_cat_encoder"
+        <<: *tf_kwargs
+        num_encoder_layers: 6
+        normalize_before: False
+
+      decoder:
+        type: "src.models.grd_decoder.build_grd_decoder"
+        <<: *tf_kwargs
+        num_decoder_layers: 6
+        return_intermediate: True
+
+  #headers
+#  task_headers:
+#    grounding:
+#  #    _target_: 34
+#      a: 3
+#
+#    correction:
+#  #    _target_: 5
+#      a: 3
+#
+#    rationale:
+#  #    _target_: 5
+#      a: 3
+#
+#
+#contrastive_align_projection_image:
+#  _target_: 6
+#
+#contrastive_align_projection_text:
+#  _target_: 6
+
+
+
+lr: 0.001
+weight_decay: 0.0005

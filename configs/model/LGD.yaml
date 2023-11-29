@@ -1,0 +1,119 @@
+user_home_dir: /home/user_name
+pretraining_weight: ${datamodule.dataset_dir}/pretraining_weight
+DDPM_cfg: &DDPM_cfg
+  ckpt_path: ${model.pretraining_weight}/stable-diffusion/sd_no_t5adpter_2023-03-17T12-31-46_tag_ft_taj_add3taj_blip2_b_vqai_4000.ckpt
+  linear_start: 0.00085
+  linear_end: 0.0120
+  num_timesteps_cond: 1
+  log_every_t: 200
+  timesteps: 1000
+  first_stage_key: edited
+  cond_stage_key: edit
+  image_size: 64
+  channels: 4
+  cond_stage_trainable: false   # Note: different from the one we trained before
+  conditioning_key: hybrid
+  monitor: val/loss_simple_ema
+  scale_factor: 0.18215
+  use_ema: true
+  load_ema: false
+  flan_t5_name: flan-t5-xxl
+
+FrozenCLIPT5Embedder: &FrozenCLIPT5Embedder
+  target: stable_diffusion.ldm.modules.encoders.modules.FrozenCLIPT5Embedder
+  params:
+    clip_model_name: ${model.pretraining_weight}/clip-vit-large-patch14
+    flan_t5_model_name: ${model.pretraining_weight}/flan-t5-xxl
+    max_length: 77
+
+
+first_stage_config: &first_stage_config
+  target: stable_diffusion.ldm.models.autoencoder.AutoencoderKL
+  params:
+    embed_dim: 4
+    monitor: val/rec_loss
+    ddconfig:
+      double_z: true
+      z_channels: 4
+      resolution: 512
+      in_channels: 3
+      out_ch: 3
+      ch: 128
+      ch_mult:
+        - 1
+        - 2
+        - 4
+        - 4
+      num_res_blocks: 2
+      attn_resolutions: [ ]
+      dropout: 0.0
+    lossconfig:
+      target: torch.nn.Identity
+
+blip2_stage_config: &blip2_stage_config
+  target: lavis.models.blip2_models.blip2_t5.Blip2T5
+  pretrained: ${model.pretraining_weight}/blip2_pretrained_flant5xxl.pth
+  load_finetuned: False
+  params:
+    vit_model: eva_clip_g
+    img_size: 364 #480  equal img_size of blip2_train_data_processor
+    drop_path_rate: 0
+    use_grad_checkpoint: True
+    vit_precision: fp16
+    freeze_vit: True
+    num_query_token: 32
+    t5_model: ${model.pretraining_weight}/flan-t5-xxl  #google/flan-t5-xl
+    prompt: ""
+    max_txt_len: 45 #32
+    apply_lemmatizer: False
+
+
+unet_config: &unet_config
+  target: stable_diffusion.ldm.modules.diffusionmodules.openaimodel.UNetModel
+  params:
+    image_size: 64 # unused
+    in_channels: 8
+    out_channels: 4
+    model_channels: 320
+    attention_resolutions: [ 4, 2, 1 ]
+    num_res_blocks: 2
+    channel_mult: [ 1, 2, 4, 4 ]
+    num_heads: 8
+    use_spatial_transformer: True
+    transformer_depth: 1
+    context_dim: 768
+    use_checkpoint: True
+    legacy: False
+
+
+scheduler_config: &scheduler_config # 10000 warmup steps
+  target: stable_diffusion.ldm.lr_scheduler.LambdaLinearScheduler
+  params:
+    warm_up_steps: [ 0 ]
+    cycle_lengths: [ 10000000000000 ] # incredibly large number to prevent corner cases
+    f_start: [ 3.e-5 ] #1.e-6
+    f_max: [ 1. ]
+    f_min: [ 1. ]
+
+model:
+  base_learning_rate: 3.0e-05
+  target: stable_diffusion.ldm.models.diffusion.ddpm_edit.LatentDiffusion
+  params:
+    <<: *DDPM_cfg
+    first_stage_config: *first_stage_config
+    blip2_stage_config: *blip2_stage_config
+    unet_config: *unet_config
+    cond_stage_config: *FrozenCLIPT5Embedder
+    scheduler_config: *scheduler_config
+    
+
+    
+evaluate:
+  steps: 50
+  cfg_text: 7.5
+  cfg_image: 1.8
+  seeds: (1391, 1491, 1441, 1313, 2828, 1399, 1499, 4113, 3114)
+  bridge: feat
+  generate_img_dir: ${model.user_home_dir}/imix2.0_log/vqai_eval_output"
+  clip_model: "ViT-B/32"
+  sample_file: ${datamodule.dataset_dir}/VQAI_v6/labels_sample_val.json  

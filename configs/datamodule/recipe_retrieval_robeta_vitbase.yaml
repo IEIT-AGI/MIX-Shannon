@@ -1,0 +1,51 @@
+_target_: src.datamodules.recipe_datamodule.RecipeDataModule
+
+dataset_dir: data/recipe_datasets
+feature_dir: ${datamodule.dataset_dir}/feature/img_match_recipe
+
+
+max_sentence_len: &max_sentence_len 50
+
+vocab: &vocab
+  _target_: src.datamodules.vocabulary.Vocab
+  vocab_file: ${datamodule.dataset_dir}/cache/CNNDM/vocab
+  max_size: 50000
+
+
+# dataloader parameters
+batch_size: 32
+num_workers: 4
+pin_memory: false
+
+collate_fn: &recipe_collate_fn
+  _target_: src.datamodules.recipe_datamodule.recipe_collate_fn
+  _partial_: true
+
+
+dataloader: &dataloader
+  batch_size: ${datamodule.batch_size}
+  num_workers: ${datamodule.num_workers}
+  pin_memory: ${datamodule.pin_memory}
+  collate_fn: *recipe_collate_fn
+
+
+dataset:
+  dataloader: *dataloader
+
+  train_cfg:
+    recipe_text_feature: ${datamodule.feature_dir}/roberta_text_train_dataset.pkl
+    image_feature: ${datamodule.feature_dir}/vitbase_img_train_dataset.pkl
+    vocab: *vocab
+    max_sentence_len: *max_sentence_len
+
+  val_cfg:
+    recipe_text_feature: ${datamodule.feature_dir}/roberta_text_val_dataset.pkl
+    image_feature: ${datamodule.feature_dir}/vitbase_img_val_dataset.pkl
+    vocab: *vocab
+    max_sentence_len: *max_sentence_len
+
+
+
+
+
+

@@ -1,0 +1,188 @@
+_target_: src.models.modules.HgCAn_module.HgCAnModule
+
+hidden_dim: &hidden_dim 768
+hidden_dim2: &hidden_dim2 1536   # 2*hidden_dim
+n_heads: &n_heads 8
+num_queries: &num_queries 100
+word_embedding_size: &word_embedding_size 300
+attention_dropout_prob: &attention_dropout_prob 0.1
+position_wise_dropout_prob: &position_wise_dropout_prob 0.1
+position_wise_inner_hidden_size: &position_wise_inner_hidden_size 512
+feature_embedding_size: &feature_embedding_size 50
+
+learning_rate: &learning_rate 0.00005
+evaluator_distance_type: &eval_dist_type euclidean  # euclidean
+
+is_shuffle:  true
+rnn_model: &rnn_model
+  input_size: *hidden_dim
+  hidden_size: *hidden_dim
+  num_layers: 2
+  batch_first: True
+  dropout: 0.1
+  bidirectional: True
+  _target_: torch.nn.LSTM
+
+rnn_rst_proj: &rnn_proj
+  in_features: 1536
+  out_features: *hidden_dim
+  _target_: torch.nn.Linear
+
+GAT_model: &GAT_model  # graphical attention network(GAT)
+  in_dim: *hidden_dim
+  out_dim: *hidden_dim
+  num_heads: *n_heads
+  attn_drop_out: *attention_dropout_prob
+  ffn_inner_hidden_size: *position_wise_inner_hidden_size
+  ffn_drop_out: *position_wise_dropout_prob
+  feat_embed_size: *feature_embedding_size
+
+model:
+  # encoders
+  recipe_encoder:
+    is_shuffle: ${model.is_shuffle}
+    type: RecipeEncoder
+    n_iter: 1
+    ins2ing:
+      <<: *GAT_model
+      layerType: S2W
+
+    ing2ins:
+      <<: *GAT_model
+      layerType: W2S
+
+    tf_embedding:
+      num_embeddings: 10
+      embedding_dim: 50
+      _target_: torch.nn.Embedding
+
+    text_lstm: *rnn_model
+    text_lstm_proj: *rnn_proj
+
+    #     title_lstm:  # todo code no use
+    #       input_size: *word_embedding_size
+    #       hidden_size: *hidden_dim
+    #       num_layers: 2
+    #       batch_first: True
+    #       dropout: 0.1
+    #       bidirectional: True
+    #       type: LSTM
+    #
+    #     title_lstm_proj: # todo code no use
+    #       in_features: 1536
+    #       out_features: *hidden_dim
+
+    title_feat_proj:
+      in_features: *hidden_dim
+      out_features: *hidden_dim
+      _target_: torch.nn.Linear
+
+
+  csi_encoder: #cooking steps image encoder
+    type: CSIEncoder
+    is_shuffle: ${model.is_shuffle}
+    AEN: # attention_embedding network
+      type: AttentionEmbedding
+      img_feat_proj:
+        in_features: 2048
+        out_features: *hidden_dim
+        _target_: torch.nn.Linear
+
+      attention_module:
+        layer1:
+          in_features: *hidden_dim
+          out_features: 384  # hidden_dim/2
+
+        layer2:
+          in_features: 384
+          out_features: 192 # hidden_dim/4
+
+        layer3:
+          in_features: 192
+          out_features: 1
+
+        layer4:
+          in_features: 45
+          out_features: 45
+          is_last_layer: True
+
+
+    csi_lstm: *rnn_model
+    csi_lstm_proj: *rnn_proj # header? TODO
+
+
+  header:
+    pairwise_header: # pairwise hinge-loss
+      type: PairwiseHeader
+      feat_proj:
+        in_features: *hidden_dim
+        out_features: *hidden_dim
+        _target_: torch.nn.Linear
+      loss_cfg:
+        type: TripletLoss
+        mask_for_multimodal: True
+        margin: 1.5  # for gradient clipping max gradient normalization
+
+    shuffle_header:
+      type: ShuffleHeader
+      csi_header:
+        feat_proj:
+          in_features: *hidden_dim
+          out_features: 1
+          _target_: torch.nn.Linear
+        loss_cfg:
+          _target_: torch.nn.BCEWithLogitsLoss
+
+      instruction_header:
+        feat_proj:
+          in_features: *hidden_dim
+          out_features: 1
+          _target_: torch.nn.Linear
+        loss_cfg:
+          _target_: torch.nn.BCEWithLogitsLoss
+
+      mix_instruction_csi_header:
+        feat_proj:
+          in_features: *hidden_dim2
+          out_features: 1
+          _target_: torch.nn.Linear
+        loss_cfg:
+          _target_: torch.nn.BCEWithLogitsLoss
+
+
+optimizer_params:
+  type: Adam
+  lr: *learning_rate
+
+Scheduler:
+  type: HgCAnScheduler
+  max_lr: 5e-6
+
+evaluate:
+  text_to_csi_metric_1000:
+    type: retrieval_evaluator
+    ranking_size: 1000
+    run_eval_nums: 1
+    is_order_pick: False
+    distance_type: *eval_dist_type
+
+  text_to_csi_metric_500:
+    type: retrieval_evaluator
+    ranking_size: 500
+    run_eval_nums: 10
+    is_order_pick: False
+    distance_type: *eval_dist_type
+
+  csi_to_text_metric_1000:
+    type: retrieval_evaluator
+    ranking_size: 1000
+    run_eval_nums: 1
+    is_order_pick: False
+    distance_type: *eval_dist_type
+
+  csi_to_text_metric_500:
+    type: retrieval_evaluator
+    ranking_size: 500
+    run_eval_nums: 10
+    is_order_pick: False
+    distance_type: *eval_dist_type

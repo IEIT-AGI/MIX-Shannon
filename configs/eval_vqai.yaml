@@ -1,0 +1,43 @@
+# @package _global_
+
+# specify here default training configuration
+defaults:
+  - _self_
+  - datamodule: vqai.yaml
+  #  - datamodule: mnist.yaml
+#   - model: ARE_pretrain.yaml
+#   - model: ARE_add_grd_feature_gate_attention.yaml
+  - model: LGD.yaml
+  #  - model: mnist.yaml
+  - callbacks: default.yaml
+  #  - logger: null # set logger here or use command line (e.g. `python train.py logger=tensorboard`)
+  - logger: tensorboard
+  - trainer: default.yaml
+  - log_dir: default.yaml
+
+  # enable color logging
+  - override hydra/hydra_logging: colorlog
+  - override hydra/job_logging: colorlog
+
+# path to original working directory
+# hydra hijacks working directory by changing it to the new log directory
+# https://hydra.cc/docs/next/tutorials/basic/running_your_app/working_directory
+original_work_dir: ${hydra:runtime.cwd}
+
+# path to folder with data
+data_dir: ${original_work_dir}/data/
+
+# pretty print config at the start of the run using Rich library
+print_config: True
+
+# disable python warnings if they annoy you
+ignore_warnings: True
+
+# seed for random number generators in pytorch, numpy and python.random
+seed: 41
+
+# default name for the experiment, determines logging folder path
+# (you can overwrite this name in experiment configs)
+name: "VQAI-Evaluation"
+# passing checkpoint path is necessary  todo ckpt's path
+ckpt_path: /home/user_name/Pro/blipix_20230428/logs/q2i_v8_trainval/checkpoints/epoch=000049.ckpt

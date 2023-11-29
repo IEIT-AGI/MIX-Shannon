@@ -1,0 +1,47 @@
+_target_: src.datamodules.frec_datamodule.FRECDataModule
+
+dataset_dir: &dataset_dir /home/datasets/imix2.0/Further-RefCOCOs
+annotation_dir: &annotation_dir ${datamodule.dataset_dir}/annotations
+image_dir: &image_dir ${datamodule.dataset_dir}/images
+
+bert_path: &bert_path /home/${oc.env:USER}/.cache/torch/hub/transformers/roberta-base
+# bert_path: &bert_path roberta-base
+
+tokenizer: &tokenizer
+  _target_: transformers.RobertaTokenizerFast.from_pretrained
+  pretrained_model_name_or_path: *bert_path
+
+image_transforms: &image_transforms
+  _target_: src.datamodules.transforms.image_transforms.build_img_pipeline
+  _partial_: true
+  cautious: true
+
+# dataloader parameters
+batch_size: 2
+num_workers: 1
+pin_memory: false
+collate_fn: &frec_collate_fn
+  _target_: src.datamodules.frec_datamodule.frec_collate_fn
+  _partial_: true
+  is_do_round: false
+
+dataloader: &dataloader
+  batch_size: ${datamodule.batch_size}
+  num_workers: ${datamodule.num_workers}
+  pin_memory: ${datamodule.pin_memory}
+  collate_fn: *frec_collate_fn
+
+dataset_cfg: &dataset_cfg
+  image_dir: *image_dir
+  annotation_dir: *annotation_dir
+  tokenizer: *tokenizer
+  data_file: ${datamodule.dataset_dir}/train_names.txt.bk
+  image_transforms: *image_transforms
+
+dataset:
+  dataloader: *dataloader
+
+  train_cfg: *dataset_cfg
+  val_cfg:
+    <<: *dataset_cfg
+    data_file: ${datamodule.dataset_dir}/val_names.txt

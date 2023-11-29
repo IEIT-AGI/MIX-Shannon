@@ -1,0 +1,246 @@
+_target_: src.models.modules.are_module.AREModule
+pretrain_weight: ${datamodule.dataset_dir}/exp_mdetr_trainval/from_mdetr_checkpoint.ckpt
+is_init_parameters: true
+
+hidden_dim: &hidden_dim 256
+half_hidden_dim: &half_hidden_dim 128 # 2*hidden_dim
+n_heads: &n_heads 8
+
+num_queries: &num_queries 100
+dim_feedforward: &dim_feedforward 2048
+dropout: &dropout 0.1
+is_before_normalize: &is_before_normalize false
+activation_type: &activation_type relu
+bert_path: &bert_path /home/${oc.env:USER}/.cache/torch/hub/transformers/roberta-base
+is_pass_pos_and_query: &is_pass_pos_and_query true
+
+#loss coef
+loss_label_weight: &loss_label_weight 0.1
+loss_bbox_weight: &loss_bbox_weight 5
+loss_giou_weight: &loss_giou_weight 2
+loss_event_weight: &loss_event_weight 1
+loss_answer_weight: &loss_answer_weight 1
+
+# learning rate
+base_learning_rate: &base_lr 0.0005
+visual_text_encoder_lr: &vt_lr 5e-6
+grounding_decoder_lr: &grd_decoder_lr 5e-5
+reasoning_encoder_lr: &reason_encoder_lr 5e-5
+grounding_encoder_lr: &grd_encoder_lr 5e-5
+
+### header
+reasoning_decoder_header: &reason_decoder_header
+  type: ReasoningHeader
+  event_header:
+    type: EventHeader
+    tau: 0.01 # temperature parameter
+    loss_weight: *loss_event_weight
+
+  answer_header:
+    type: AnswerHeader
+    tau: 1 # temperature parameter
+    loss_weight: *loss_answer_weight
+
+object_detection_header: &grd_header
+  type: ObjectDetectionHeader
+  label_loss:
+    type: SoftTokenLoss #mdetr label loss
+    eos_coef: 0.1
+    loss_weight: *loss_label_weight
+  bbox_loss:
+    type: L1GIoULoss #mdetr bbox loss
+    loss_l1_weight: *loss_bbox_weight
+    loss_giou_weight: *loss_giou_weight
+
+  matcher:
+    type: HungarianMatcher
+    cost_class: 1
+    cost_bbox: 5
+    cost_giou: 2
+
+###model
+
+answer_event_token: &answer_event_token
+  _target_: torch.nn.Embedding
+  num_embeddings: 1
+  embedding_dim: *hidden_dim
+
+tokenizer: &tokenizer
+  _target_: transformers.RobertaTokenizerFast.from_pretrained
+  pretrained_model_name_or_path: *bert_path
+
+text_encoder: &text_encoder
+  _target_: transformers.RobertaModel.from_pretrained
+  pretrained_model_name_or_path: *bert_path
+
+layer_norm: &layer_norm
+  _target_: torch.nn.LayerNorm
+  normalized_shape: *hidden_dim
+
+model:
+  are_encoder:
+    type: AREEncoder
+    is_pass_pos: *is_pass_pos_and_query
+    answer_token: *answer_event_token
+    event_token: *answer_event_token
+
+    tokenizer: *tokenizer
+
+    feature_resizer: &feature_resizer
+      type: FeatureResizer
+      input_feat_size: 768
+      output_feat_size: *hidden_dim
+      dropout: *dropout
+
+    visual_encoder:
+      type: VisualEncoder
+
+      backbone:
+        type: TimmBackbone
+        name: tf_efficientnet_b3_ns
+        return_interm_layers: false
+        main_layer: -1
+        group_norm: true
+
+      position_embedding:
+        type: PositionEmbeddingSine
+        num_pos_feats: *half_hidden_dim
+        normalize: true
+
+      visual_proj:
+        _target_: torch.nn.Conv2d
+        in_channels: 384 #todo
+        out_channels: *hidden_dim
+        kernel_size: 1
+
+    text_encoder: *text_encoder
+
+    reasoning_encoder: #cross attention: for reasoning on event knowledge
+      type: CatEncoder
+      is_before_norm: *is_before_normalize
+      encoder_layer:
+        type: TransformerEncoderLayer
+        d_model: *hidden_dim
+        nhead: *n_heads
+        dim_feedforward: *dim_feedforward
+        dropout: *dropout
+        activation: *activation_type
+        normalize_before: *is_before_normalize
+
+      num_layers: 1
+      norm: *layer_norm
+
+    grounding_encoder: # cross attention: for grounding decoder for locating the key object
+      type: CatEncoder
+      is_before_norm: *is_before_normalize
+
+      encoder_layer:
+        type: TransformerEncoderLayer
+        d_model: *hidden_dim
+        nhead: *n_heads
+        dim_feedforward: *dim_feedforward
+        dropout: *dropout
+        activation: *activation_type
+        normalize_before: *is_before_normalize
+
+      num_layers: 6
+      norm: *layer_norm
+
+  explaining_decoder:
+    type: ExplainingDecoder
+    num_queries: *num_queries
+    is_pass_query: *is_pass_pos_and_query
+    class_embed:
+      in_features: *hidden_dim
+      out_features: *hidden_dim #todo
+
+    bbox_embed:
+      type: MLP
+      input_dim: *hidden_dim
+      hidden_dim: *hidden_dim
+      output_dim: 4
+      num_layers: 3
+
+    query_embed:
+      _target_: torch.nn.Embedding
+      num_embeddings: *num_queries
+      embedding_dim: *hidden_dim
+
+    grounding_decoder:
+      type: GrdDecoder
+      decoder_layer:
+        type: TransformerDecoderLayer
+        d_model: *hidden_dim
+        nhead: *n_heads
+        dim_feedforward: *dim_feedforward
+        dropout: *dropout
+        activation: *activation_type
+        normalize_before: *is_before_normalize
+
+      num_layers: 6
+      is_norm: true
+      norm: *layer_norm
+      return_intermediate: true
+
+    header: *grd_header
+
+  reasoning_decoder:
+    type: ReasoningDecoder
+    tokenizer: *tokenizer
+    text_encoder: *text_encoder
+    event_data: ${datamodule.dataset_dir}/whole_noise_0120_answer.vocab.cogqa.fact_2.json
+    answer_data: ${datamodule.dataset_dir}/whole_noise_0120_answer.vocab.cogqa_2.json
+    hidden_size: 768
+    event_net:
+      type: MLP_ANS
+      ans_feature_len: 768
+      hidden_size: *dim_feedforward
+      embedding_size: *hidden_dim
+    answer_net:
+      type: MLP_ANS
+      ans_feature_len: 768
+      hidden_size: *dim_feedforward
+      embedding_size: *hidden_dim
+
+    header: *reason_decoder_header
+
+optimizer_params:
+  type: Adam
+  weight_decay: 0.0001
+  lr: *base_lr
+  paramwise_cfg:
+    explaining_decoder:
+      grd_decoder:
+        lr: *grd_decoder_lr
+    are_encoder:
+      name_in_model: encoder
+      visual_encoder.encode:
+        lr: *vt_lr
+      text_encoder:
+        lr: *vt_lr
+      reasoning_encoder:
+        lr: *reason_encoder_lr
+      explaining_encoder:
+        lr: *grd_encoder_lr
+
+evaluate:
+  retrieval_support_event:
+    type: Retrieval
+    rank: (1,3,5,10,30,50)
+
+  answer_question:
+    type: ARE_QA
+    event_to_answer: ${datamodule.dataset_dir}/14608_fact2ans.json
+    answer_mask:
+      type: HardMask
+      value: 100
+
+    evaluator:
+      type: Retrieval
+      rank: (1,3,5,10,30,50)
+    weighted_hit_score: ${datamodule.dataset_dir}/0120_answer_sim_10.json #wHIT
+
+  grounding_key_object:
+    type: AREGrounding
+    rank: (1,5,10)
+    iou_thresh: 0.5

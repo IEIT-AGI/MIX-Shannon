@@ -1,0 +1,65 @@
+_target_: src.datamodules.vqai_datamodule.VQAIDataModule
+
+dataset_dir: /home/datasets/imix2.0/VQAI
+image_dir: &image_dir ${datamodule.dataset_dir}/VQAI_v6/images
+causal_feature: &causal_feature ${datamodule.dataset_dir}/VQAI_v6/VQAI-causal-feature-mean-flan-t5-xxl.pt
+
+blip2_train_data_processor: &blip2_train_data_processor
+  vis_processor:
+    target: lavis.processors.blip_processors.BlipImageTrainProcessor
+    params:
+      image_size: 364
+  text_processor:
+    target: lavis.processors.blip_processors.BlipQuestionProcessor
+
+blip2_val_data_processor: &blip2_val_data_processor
+  vis_processor:
+    target: lavis.processors.blip_processors.BlipImageEvalProcessor
+    params:
+      image_size: 364
+  text_processor:
+    target: lavis.processors.base_processor.BaseProcessor
+
+# image transforms
+max_resize_resolution: &max_resize_resolution 512
+min_resize_resolution: &min_resize_resolution 512
+crop_resolution: &crop_resolution 512
+flip_prob: &flip_prob 0.5
+
+img_random_crop: &img_random_crop
+  _target_: torchvision.transforms.RandomCrop
+  size: *crop_resolution
+
+img_flip: &img_flip
+  _target_: torchvision.transforms.RandomHorizontalFlip
+  p: *flip_prob
+
+# dataloader parameters
+batch_size: 2
+num_workers: 0
+pin_memory: false
+
+dataloader: &dataloader
+  batch_size: ${datamodule.batch_size}
+  num_workers: ${datamodule.num_workers}
+  pin_memory: ${datamodule.pin_memory}
+
+dataset:
+  dataloader: *dataloader
+
+  train_cfg:
+    image_dir: *image_dir
+    sample_file: ${datamodule.dataset_dir}/VQAI_v6/labels_cot_train.json
+    max_resize_resolution: *max_resize_resolution
+    min_resize_resolution: *min_resize_resolution
+    img_random_crop: *img_random_crop
+    img_flip: *img_flip
+    blip2_data_processor: *blip2_train_data_processor
+    causal_feature: *causal_feature
+
+  val_cfg:
+    image_dir: *image_dir
+    sample_file: ${datamodule.dataset_dir}/VQAI_v6/labels_cot_val.json
+    max_resize_resolution: *max_resize_resolution
+    min_resize_resolution: *min_resize_resolution
+    blip2_data_processor: *blip2_val_data_processor

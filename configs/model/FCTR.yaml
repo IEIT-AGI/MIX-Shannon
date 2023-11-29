@@ -1,0 +1,310 @@
+_target_: src.models.modules.fctr_module.FCTRModule
+
+pretrain_weight: ${datamodule.dataset_dir}/pretrain_model/from_mdetr_checkpoint_no_share.ckpt
+is_init_parameters: true
+
+hidden_dim: &hidden_dim 256
+half_hidden_dim: &half_hidden_dim 128
+
+num_queries: &num_queries 100
+contrastive_loss_hdim: &contrastive_loss_hdim 64
+
+n_heads: &n_heads 8
+dim_feedforward: &dim_feedforward 2048
+is_before_normalize: &is_before_normalize false
+dropout: &dropout 0.1
+activation_type: &activation_type relu
+bert_path: &bert_path /home/${oc.env:USER}/.cache/torch/hub/transformers/roberta-base
+# bert_path: &bert_path roberta-base
+
+#learning rate
+base_learning_rate: &base_lr 5e-5
+
+visual_encoder_lr: &visual_encoder_lr 1e-6
+text_encoder_lr: &text_encoder_lr 1e-7
+multimodal_fusion_lr: &multimodal_fusion_lr 2e-5
+attention_interaction_lr: &ai_lr 2e-5
+
+grd_encoder_lr: &grd_encoder_lr 2e-5
+grd_decoder_lr: &grd_decoder_lr 1e-5
+rationale_task_decoder_lr: &rationale_task_decoder_lr 2e-5
+correction_task_decoder_lr: &correction_task_decoder_lr 2e-5
+
+RobertaModel: &RobertaModel
+  _target_: transformers.RobertaModel.from_pretrained
+  pretrained_model_name_or_path: *bert_path
+
+RobertaTokenizerFast: &RobertaTokenizerFast
+  _target_: transformers.RobertaTokenizerFast.from_pretrained
+  pretrained_model_name_or_path: *bert_path
+
+TokensPositionEmbeddings: &TokensPositionEmbeddings
+  type: TokensPositionEmbeddings
+  dims: *hidden_dim
+
+layer_norm: &layer_norm
+  _target_: torch.nn.LayerNorm
+  normalized_shape: *hidden_dim
+
+transformers_decoder_kwargs: &tf_decoder_kwargs
+  tokenizer: *RobertaTokenizerFast
+  text_encoder: *RobertaModel
+  token_pos_eb: *TokensPositionEmbeddings
+
+Linear: &Linear
+  _target_: torch.nn.Linear
+  in_features: *hidden_dim
+  out_features: *contrastive_loss_hdim
+
+#header and losss
+GroundingLoss: &grd_loss
+  type: FCTRGroundingLoss
+  label_loss:
+    type: SoftTokenLoss
+    loss_weight: 1
+  bbox_loss:
+    type: L1GIoULoss
+    loss_l1_weight: 5
+    loss_giou_weight: 2
+  cardinality_loss:
+    type: CardinalityLoss
+    loss_weight: 0 #todo  no use set to 0
+  contrastive_align_loss:
+    type: ContrastiveAlignLoss
+    temperature: 0.07
+    box_to_token_loss_weight: 1
+    token_to_box_loss_weight: 1
+  matcher:
+    type: HungarianMatcher
+    cost_class: 1
+    cost_bbox: 5
+    cost_giou: 2
+
+linear_layer: &FC
+  _target_: torch.nn.Linear
+  in_features: *hidden_dim
+  out_features: *hidden_dim
+
+fctr_header:
+  GroundingHeader: &grd_header
+    type: FCTRGroundingHeader
+    grd_loss: *grd_loss
+    grd_proj:
+      class_embed: *FC
+
+      bbox_embed:
+        type: MLP
+        input_dim: *hidden_dim
+        hidden_dim: *hidden_dim
+        output_dim: 4
+        num_layers: 3
+
+      contrastive_align_img_proj: *Linear
+      contrastive_align_text_proj: *Linear
+
+  caption_loss: &caption_loss
+    type: FCTRCaptionLoss
+    token_loss_weight: 1
+    focus_loss_weight: 2
+    token_loss:
+      _target_: torch.nn.CrossEntropyLoss
+      ignore_index: 1
+    focus_loss:
+      _target_: torch.nn.CrossEntropyLoss
+      ignore_index: 1
+
+  Correction_header: &Correction_header
+    type: FCTRCorrectionHeader
+    caption_loss: *caption_loss
+    modify_words_loss:
+      _target_: torch.nn.CrossEntropyLoss
+      ignore_index: 1
+    feature_loss:
+      _target_: torch.nn.MSELoss
+    caption_loss_weight: 2
+    modify_words_loss_weight: 2
+    feature_loss_weight: 0.5
+
+  Rationale_header: &Rationale_header
+    type: FCTRRationaleHeader
+    caption_loss: *caption_loss
+    caption_loss_weight: 1
+
+#model
+model:
+  fctr_encoder:
+    type: FCTREncoder
+    token_pos_eb: *TokensPositionEmbeddings
+    image_encoder:
+      type: VisualEncoder
+
+      backbone:
+        type: TimmBackbone
+        name: tf_efficientnet_b3_ns
+        return_interm_layers: false
+        main_layer: -1
+        group_norm: true
+
+      position_embedding:
+        type: PositionEmbeddingSine
+        num_pos_feats: *half_hidden_dim
+        normalize: true
+
+      visual_proj:
+        _target_: torch.nn.Conv2d
+        in_channels: 384 #todo
+        out_channels: *hidden_dim
+        kernel_size: 1
+
+    text_encoder:
+      type: FCTRTextEncoder
+      tokenizer: *RobertaTokenizerFast
+      encoder: *RobertaModel
+      feature_resizer:
+        type: FeatureResizer
+        input_feat_size: 768
+        output_feat_size: *hidden_dim
+        dropout: *dropout
+
+    multimodal_fusion:
+      type: CatEncoder
+      is_before_norm: *is_before_normalize
+      encoder_layer:
+        type: TransformerEncoderLayer
+        d_model: *hidden_dim
+        nhead: *n_heads
+        dim_feedforward: *dim_feedforward
+        dropout: *dropout
+        activation: *activation_type
+        normalize_before: *is_before_normalize
+
+      num_layers: 6
+
+    attention_interaction: # attentional interaction module(AIM)
+      type: CrsEncoder
+      encoder_layer:
+        type: CrossTransformerEncoderLayer
+        d_model: *hidden_dim
+        nhead: *n_heads
+        dim_feedforward: *dim_feedforward
+        dropout: *dropout
+        activation: *activation_type
+
+      num_layers: 6
+      norm_c: *layer_norm
+      norm_s: *layer_norm
+
+  fctr_decoder:
+    type: FCTRDecoder
+    correction_task:
+      type: ExpressionCorrectionTask
+      decoder:
+        type: CorDecoder
+        d_model: *hidden_dim
+        num_layers: 6
+        encoder_layer:
+          type: GenerateTransformerDecoderLayer
+          d_model: *hidden_dim
+          nhead: *n_heads
+          dim_feedforward: *dim_feedforward
+          dropout: *dropout
+          activation: *activation_type
+        tokenizer: *RobertaTokenizerFast
+        word_embedding: *RobertaModel
+        token_pos_eb: *TokensPositionEmbeddings
+
+      header: *Correction_header
+
+    rationale_task:
+      type: RationaleGenerationTask
+      decoder:
+        type: RatDecoder
+        d_model: *hidden_dim
+        num_layers: 6
+        encoder_layer:
+          type: GenerateTransformerDecoderLayer
+          d_model: *hidden_dim
+          nhead: *n_heads
+          dim_feedforward: *dim_feedforward
+          dropout: *dropout
+          activation: *activation_type
+        tokenizer: *RobertaTokenizerFast
+        word_embedding: *RobertaModel
+        token_pos_eb: *TokensPositionEmbeddings
+      header: *Rationale_header
+
+    grounding_task:
+      type: GroundingTask
+      encoder: ${model.model.fctr_encoder.multimodal_fusion}
+      decoder:
+        type: GrdDecoder
+        decoder_layer:
+          type: TransformerDecoderLayer
+          d_model: *hidden_dim
+          nhead: *n_heads
+          dim_feedforward: *dim_feedforward
+          dropout: *dropout
+          activation: *activation_type
+          normalize_before: *is_before_normalize
+
+        num_layers: 6
+        is_norm: true
+        norm: *layer_norm
+        return_intermediate: true
+      header: *grd_header
+      query_embed:
+        _target_: torch.nn.Embedding
+        num_embeddings: *num_queries
+        embedding_dim: *hidden_dim
+
+#The order of optimizer_params can not be reversed because it corresponds to nrec_scheduler
+optimizer_params:
+  type: Adam
+  lr: *base_lr
+  weight_decay: 1e-4
+  paramwise_cfg:
+    fctr_encoder:
+      name_in_model: model.encoder
+      image_encoder.encode:
+        lr: *visual_encoder_lr
+      text_encoder.encoder:
+        lr: *text_encoder_lr
+
+      multimodal_fusion:
+        lr: *multimodal_fusion_lr
+
+      attention_interaction:
+        lr: *ai_lr
+
+    fctr_decoder:
+      name_in_model: model.decoder
+      exp_cor_task.decoder: #correction_task
+        lr: *correction_task_decoder_lr
+      rationale_task.decoder:
+        lr: *rationale_task_decoder_lr
+      #      grd_task.model.encoder: #grounding_task
+      #        lr: *grd_encoder_lr
+      grd_task.model.decoder:
+        lr: *grd_decoder_lr
+
+Scheduler:
+  type: FCTRScheduler
+  schedule: "linear_with_warmup"
+  warm_steps_ratio: 0.01
+  lr_drop: 35
+
+evaluate:
+  rationale_eval:
+    type: CorrectionEvaluator
+    cider:
+      score_mode: max
+
+  correction_eval:
+    type: RationaleEvaluator
+    cider:
+      score_mode: all
+
+  grounding_eval:
+    type: FRECGrounding
+    rank: (1,5,10)
+    iou_thresh: 0.5

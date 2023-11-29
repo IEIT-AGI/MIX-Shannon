@@ -1,0 +1,69 @@
+_target_: src.datamodules.ai_vqa_datamodule.AIVQADataModule
+
+dataset_dir: /home/datasets/imix2.0/ai-vqa
+annotation_dir: ${datamodule.dataset_dir}/annotations
+image_dir: &image_dir ${datamodule.dataset_dir}/vg-images
+answer_file: &answer_file ${datamodule.dataset_dir}/noise_0120_answer.vocab.cogqa.json
+event_file: &event_file ${datamodule.dataset_dir}/noise_0120_answer.vocab.cogqa.fact.json
+
+image_transforms: &image_transforms #todo
+  _target_: src.datamodules.transforms.image_transforms.build_img_pipeline
+  _partial_: true
+  cautious: true
+
+tokenizer: &tokenizer
+  _target_: transformers.RobertaTokenizerFast.from_pretrained
+  pretrained_model_name_or_path: /home/${oc.env:USER}/.cache/torch/hub/transformers/roberta-base
+
+# dataloader parameters
+batch_size: 4
+num_workers: 2
+pin_memory: false
+collate_fn: &ai_vqa_collate_fn
+  _target_: src.datamodules.ai_vqa_datamodule.ai_vqa_collate_fn
+  _partial_: true
+  is_do_round: false
+
+dataloader: &dataloader
+  batch_size: ${datamodule.batch_size}
+  num_workers: ${datamodule.num_workers}
+  pin_memory: ${datamodule.pin_memory}
+  collate_fn: *ai_vqa_collate_fn
+
+
+dataset:
+  dataloader: *dataloader
+  dataset_cls: AIVQADataset
+
+  train_cfg:
+    annotation_file: ${datamodule.annotation_dir}/cogqa_14608_train.json
+    img_path: *image_dir
+    answer_file: *answer_file
+    event_file: *event_file
+    img_transforms: *image_transforms
+    tokenizer: *tokenizer
+
+  val_cfg:
+    annotation_file: ${datamodule.annotation_dir}/cogqa_14608_val.json
+    img_path: *image_dir
+    answer_file: *answer_file
+    event_file: *event_file
+    img_transforms: *image_transforms
+    tokenizer: *tokenizer
+
+  test_cfg:
+    annotation_file: ${datamodule.annotation_dir}/cogqa_14608_val.json
+    img_path: *image_dir
+    answer_file: *answer_file
+    event_file: *event_file
+    img_transforms: *image_transforms
+    tokenizer: *tokenizer
+
+
+
+
+
+
+
+
+
