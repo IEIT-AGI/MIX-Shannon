@@ -64,7 +64,7 @@
 <br>
 
 ## ☎️ 联系我们
-如何您在使用过程中有任何问题、建议，请联系我们[ieitagi001@gmail.com](ieitagi001@gmail.com).
+如何您在使用过程中有任何问题、建议，请联系我们[ieitagi001@gmail.com](ieitagi001@gmail.com)
 
 
 <br>

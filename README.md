@@ -61,7 +61,7 @@ Special thanks to:
 <br>
 
 ## ☎️ Contact us
-If you have any questions, comments or suggestions, please do not hesitate to contact us at [ieitagi001@gmail.com](ieitagi001@gmail.com)..
+If you have any questions, comments or suggestions, please do not hesitate to contact us at [ieitagi001@gmail.com](ieitagi001@gmail.com)
 
 <br>
 
