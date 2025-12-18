@@ -40,7 +40,7 @@ We present the creation of a novel resource, a large-scale agent interaction vis
 
 Please use the proposed datasets for training or testing.
 
-**AI-VQA**: [Further-RefCOCOs download](xxx) 
+**AI-VQA**: [Dataset download](xxx) 
 
 
 ### How to train
