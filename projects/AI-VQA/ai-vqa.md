@@ -40,9 +40,7 @@ We present the creation of a novel resource, a large-scale agent interaction vis
 
 Please use the proposed datasets for training or testing.
 
-**Further-RefCOCOs**: [Further-RefCOCOs download](xxx) Extract code: xxx
-**Further-CopsRef**: [Further-CopsRef download](xxx) Extract code: xxx
-**Further-Talk2Car**: [Further-Talk2Car download](xxx) Extract code: xxx
+**AI-VQA**: [Further-RefCOCOs download](xxx) 
 
 
 ### How to train
@@ -63,7 +61,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3  python train.py --config-name train_ai_vqa_144k_J 
 
 <div align="center">
 
-![experiments](../resources/fctr_results.jpg)
+![experiments](../resources/ai_vqa_results.png)
 </div>
 
 ## Credits
